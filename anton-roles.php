@@ -15,8 +15,8 @@
  * @wordpress-plugin
  * Plugin Name:       Anton Roles
  * Plugin URI:        https://antonstudio.com/anton-roles
- * Description:       Add custom roles & allow role-based permission (beta)
- * Version:           1.0.3
+ * Description:       Add custom roles & allow role-based permission (Internal Testing)
+ * Version:           1.0.4
  * Author:            Anton Studio
  * Author URI:        https://antonstudio.com
  * License:           GPL-2.0+
