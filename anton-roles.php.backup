@@ -1,0 +1,932 @@
+<?php
+
+// If this file is called directly, abort.
+if ( ! defined( 'WPINC' ) ) {
+	die;
+}
+
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-role-sales-manager.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-role-sales.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-role-marketing.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-role-support-agent.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-role-super-admin.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-role-administrator.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-enums.php';
+
+// this code runs only during plugin activation and never again
+//function sal_customize_user_role() {
+//    require_once plugin_dir_path( __FILE__ ).'includes/class-sal-customize-user-role.php';
+//    Sal_Customize_User_Role::activate();
+//}
+//register_activation_hook( __FILE__, 'sal_customize_user_role' );
+
+
+
+
+function restore_users_edit_caps($caps, $cap, $user_id, $args) {
+
+    $user = wp_get_current_user();
+    // only restore for admin
+    if ( in_array( 'administrator', (array) $user->roles ) ) {
+        foreach ($caps as $key => $capability) {
+
+            if ($capability != 'do_not_allow')
+                continue;
+
+            switch ($cap) {
+                case 'edit_user':
+                case 'edit_users':
+                    $caps[$key] = 'edit_users';
+                    break;
+                case 'delete_user':
+                case 'delete_users':
+                    $caps[$key] = 'delete_users';
+                    break;
+                case 'create_users':
+                    $caps[$key] = $cap;
+                    break;
+            }
+        }
+    }
+    return $caps;
+}
+
+function edit_user_permission_check() {
+    global $profileuser;
+
+    $current_user_id = get_current_user_id();
+    if ($current_user_id===0) {
+        return;
+    }
+    if (is_super_admin()) { // Superadmin may do all
+        return;
+    }
+
+    $screen = get_current_screen();
+    if (empty($screen)) {
+        return;
+    }
+
+    if ($screen->base !== 'user-edit' && $screen->base !== 'user-edit-network') {
+        return;
+    }
+
+    // editing a user profile: it's correct to call is_super_admin() directly here, as permissions are raised for the $current_user only
+    if (!is_super_admin($current_user_id) && is_super_admin($profileuser->ID)) { // trying to edit a superadmin while himself is less than a superadmin
+        wp_die(esc_html__('You do not have permission to edit this user.', 'user-role-editor'));
+    } elseif (!( is_user_member_of_blog($profileuser->ID, get_current_blog_id()) && is_user_member_of_blog($current_user_id, get_current_blog_id()) )) { // editing user and edited user aren't members of the same blog
+        wp_die(esc_html__('You do not have permission to edit this user.', 'user-role-editor'));
+    }
+
+}
+
+/*
+make the code run on every site in the network
+when the plugin is Network Activated
+*/
+function add_custom_role_to_network($network_wide ) {
+    if ( is_multisite() && $network_wide ) {
+        // run the code for all sites in a Multisite network
+        foreach ( get_sites(['fields'=>'ids']) as $blog_id ) {
+            switch_to_blog( $blog_id );
+            add_custom_wp_role();
+        }
+        restore_current_blog();
+    }
+    else {
+        add_custom_wp_role();
+    }
+}
+
+// run the code once again when a new site is created
+function add_custom_user_role_new_site( $blog_id ) {
+    // check whether the plugin is active for the network
+    if ( is_plugin_active_for_network( 'anton-roles/anton-roles.php' ) ) {
+        switch_to_blog( $blog_id );
+        add_custom_wp_role();
+        restore_current_blog();
+    }
+}
+
+
+//remove_role( 'contributor' );
+
+function wps_change_role_name() {
+    global $wp_roles;
+    if ( ! isset( $wp_roles ) )
+        $wp_roles = new WP_Roles();
+    $wp_roles->roles['contributor']['name'] = 'Owner';
+    $wp_roles->role_names['contributor'] = 'Owner';
+}
+//add_action('init', 'wps_change_role_name');
+
+// todo: change this
+$support_agent_capabilities = array(
+    'create_sites' => false,
+    'delete_sites' => false,
+    'manage_network' => true,
+    'manage_sites' => true,
+    'manage_network_users' => true,
+    'manage_network_plugins' => true,
+    'manage_network_themes' => true,
+    'manage_network_options' => true,
+    'upgrade_network' => true,
+    'setup_network' => true,
+    'switch_themes' => true,
+    'edit_themes' => true,
+    'activate_plugins' => true,
+    'edit_plugins' => true,
+    'edit_users' => false,
+    'edit_files' => true,
+    'manage_options' => true,
+    'moderate_comments' => true,
+    'manage_categories' => true,
+    'manage_links' => true,
+    'upload_files' => true,
+    'import' => true,
+    'unfiltered_html' => true,
+    'edit_posts' => true,
+    'edit_others_posts' => true,
+    'edit_published_posts' => true,
+    'publish_posts' => true,
+    'edit_pages' => true,
+    'read' => true,
+    'level_10' => true,
+    'level_9' => true,
+    'level_8' => true,
+    'level_7' => true,
+    'level_6' => true,
+    'level_5' => true,
+    'level_4' => true,
+    'level_3' => true,
+    'level_2' => true,
+    'level_1' => true,
+    'level_0' => true,
+    'edit_others_pages' => true,
+    'edit_published_pages' => true,
+    'publish_pages' => true,
+    'delete_pages' => true,
+    'delete_others_pages' => true,
+    'delete_published_pages' => true,
+    'delete_posts' => true,
+    'delete_others_posts' => true,
+    'delete_published_posts' => true,
+    'delete_private_posts' => true,
+    'edit_private_posts' => true,
+    'read_private_posts' => true,
+    'delete_private_pages' => true,
+    'edit_private_pages' => true,
+    'read_private_pages' => true,
+    'delete_users' => false,
+    'create_users' => false,
+    'unfiltered_upload' => true,
+    'edit_dashboard' => true,
+    'update_plugins' => true,
+    'delete_plugins' => true,
+    'install_plugins' => true,
+    'update_themes' => true,
+    'install_themes' => true,
+    'update_core' => true,
+    'list_users' => true,
+    'remove_users' => true,
+    'promote_users' => true,
+    'edit_theme_options' => true,
+    'delete_themes' => true,
+    'export' => true,
+    'cfdb7_access' => true,
+);
+$sales_manager_capabilities = array(
+    'switch_themes' => false,
+    'edit_themes' => false,
+    'activate_plugins' => false,
+    'edit_plugins' => false,
+    'edit_users' => true,
+    'edit_files' => true,
+    'manage_options' => true,
+    'moderate_comments' => true,
+    'manage_categories' => true,
+    'manage_links' => true,
+    'upload_files' => true,
+    'import' => true,
+    'unfiltered_html' => true,
+    'edit_posts' => true,
+    'edit_others_posts' => true,
+    'edit_published_posts' => true,
+    'publish_posts' => true,
+    'edit_pages' => true,
+    'read' => true,
+    'level_10' => true,
+    'level_9' => true,
+    'level_8' => true,
+    'level_7' => true,
+    'level_6' => true,
+    'level_5' => true,
+    'level_4' => true,
+    'level_3' => true,
+    'level_2' => true,
+    'level_1' => true,
+    'level_0' => true,
+    'edit_others_pages' => true,
+    'edit_published_pages' => true,
+    'publish_pages' => true,
+    'delete_pages' => true,
+    'delete_others_pages' => true,
+    'delete_published_pages' => true,
+    'delete_posts' => true,
+    'delete_others_posts' => true,
+    'delete_published_posts' => true,
+    'delete_private_posts' => true,
+    'edit_private_posts' => true,
+    'read_private_posts' => true,
+    'delete_private_pages' => true,
+    'edit_private_pages' => true,
+    'read_private_pages' => true,
+    'delete_users' => true,
+    'create_users' => true,
+    'unfiltered_upload' => true,
+    'edit_dashboard' => false,
+    'update_plugins' => false,
+    'delete_plugins' => false,
+    'install_plugins' => false,
+    'update_themes' => false,
+    'install_themes' => false,
+    'update_core' => false,
+    'list_users' => true,
+    'remove_users' => true,
+    'promote_users' => true,
+    'edit_theme_options' => false,
+    'delete_themes' => false,
+    'export' => false,
+    'cfdb7_access' => true,
+);
+$sales_capabilities = array(
+    'switch_themes' => false,
+    'edit_themes' => false,
+    'activate_plugins' => false,
+    'edit_plugins' => false,
+    'edit_users' => false,
+    'edit_files' => true,
+    'manage_options' => false,
+    'moderate_comments' => false,
+    'manage_categories' => false,
+    'manage_links' => false,
+    'upload_files' => true,
+    'import' => false,
+    'unfiltered_html' => true,
+    'edit_posts' => true,
+    'edit_others_posts' => true,
+    'edit_published_posts' => true,
+    'publish_posts' => true,
+    'edit_pages' => true,
+    'read' => true,
+    'level_10' => true,
+    'level_9' => true,
+    'level_8' => true,
+    'level_7' => true,
+    'level_6' => true,
+    'level_5' => true,
+    'level_4' => true,
+    'level_3' => true,
+    'level_2' => true,
+    'level_1' => true,
+    'level_0' => true,
+    'edit_others_pages' => false,
+    'edit_published_pages' => true,
+    'publish_pages' => true,
+    'delete_pages' => true,
+    'delete_others_pages' => false,
+    'delete_published_pages' => true,
+    'delete_posts' => true,
+    'delete_others_posts' => false,
+    'delete_published_posts' => true,
+    'delete_private_posts' => true,
+    'edit_private_posts' => true,
+    'read_private_posts' => true,
+    'delete_private_pages' => true,
+    'edit_private_pages' => true,
+    'read_private_pages' => true,
+    'delete_users' => false,
+    'create_users' => false,
+    'unfiltered_upload' => true,
+    'edit_dashboard' => false,
+    'update_plugins' => false,
+    'delete_plugins' => false,
+    'install_plugins' => false,
+    'update_themes' => false,
+    'install_themes' => false,
+    'update_core' => false,
+    'list_users' => false,
+    'remove_users' => false,
+    'promote_users' => false,
+    'edit_theme_options' => false,
+    'delete_themes' => false,
+    'export' => false,
+    'cfdb7_access' => false,
+);
+$marketing_capabilities = array(
+    'switch_themes' => true,
+    'edit_themes' => true,
+    'activate_plugins' => true,
+    'edit_plugins' => true,
+    'edit_users' => true,
+    'edit_files' => true,
+    'manage_options' => true,
+    'moderate_comments' => true,
+    'manage_categories' => true,
+    'manage_links' => true,
+    'upload_files' => true,
+    'import' => true,
+    'unfiltered_html' => true,
+    'edit_posts' => true,
+    'edit_others_posts' => true,
+    'edit_published_posts' => true,
+    'publish_posts' => true,
+    'edit_pages' => true,
+    'read' => true,
+    'level_10' => true,
+    'level_9' => true,
+    'level_8' => true,
+    'level_7' => true,
+    'level_6' => true,
+    'level_5' => true,
+    'level_4' => true,
+    'level_3' => true,
+    'level_2' => true,
+    'level_1' => true,
+    'level_0' => true,
+    'edit_others_pages' => true,
+    'edit_published_pages' => true,
+    'publish_pages' => true,
+    'delete_pages' => true,
+    'delete_others_pages' => true,
+    'delete_published_pages' => true,
+    'delete_posts' => true,
+    'delete_others_posts' => true,
+    'delete_published_posts' => true,
+    'delete_private_posts' => true,
+    'edit_private_posts' => true,
+    'read_private_posts' => true,
+    'delete_private_pages' => true,
+    'edit_private_pages' => true,
+    'read_private_pages' => true,
+    'delete_users' => true,
+    'create_users' => true,
+    'unfiltered_upload' => true,
+    'edit_dashboard' => true,
+    'update_plugins' => true,
+    'delete_plugins' => true,
+    'install_plugins' => true,
+    'update_themes' => true,
+    'install_themes' => true,
+    'update_core' => true,
+    'list_users' => true,
+    'remove_users' => true,
+    'promote_users' => true,
+    'edit_theme_options' => true,
+    'delete_themes' => true,
+    'export' => true,
+    'cfdb7_access' => true,
+);
+$admin_capabilities = array(
+    'switch_themes' => true,
+    'edit_themes' => true,
+    'activate_plugins' => true,
+    'edit_plugins' => true,
+    'edit_users' => true,
+    'edit_files' => true,
+    'manage_options' => true,
+    'moderate_comments' => true,
+    'manage_categories' => true,
+    'manage_links' => true,
+    'upload_files' => true,
+    'import' => true,
+    'unfiltered_html' => true,
+    'edit_posts' => true,
+    'edit_others_posts' => true,
+    'edit_published_posts' => true,
+    'publish_posts' => true,
+    'edit_pages' => true,
+    'read' => true,
+    'level_10' => true,
+    'level_9' => true,
+    'level_8' => true,
+    'level_7' => true,
+    'level_6' => true,
+    'level_5' => true,
+    'level_4' => true,
+    'level_3' => true,
+    'level_2' => true,
+    'level_1' => true,
+    'level_0' => true,
+    'edit_others_pages' => true,
+    'edit_published_pages' => true,
+    'publish_pages' => true,
+    'delete_pages' => true,
+    'delete_others_pages' => true,
+    'delete_published_pages' => true,
+    'delete_posts' => true,
+    'delete_others_posts' => true,
+    'delete_published_posts' => true,
+    'delete_private_posts' => true,
+    'edit_private_posts' => true,
+    'read_private_posts' => true,
+    'delete_private_pages' => true,
+    'edit_private_pages' => true,
+    'read_private_pages' => true,
+    'delete_users' => true,
+    'create_users' => true,
+    'unfiltered_upload' => true,
+    'edit_dashboard' => true,
+    'update_plugins' => true,
+    'delete_plugins' => true,
+    'install_plugins' => true,
+    'update_themes' => true,
+    'install_themes' => true,
+    'update_core' => true,
+    'list_users' => true,
+    'remove_users' => true,
+    'promote_users' => true,
+    'edit_theme_options' => true,
+    'delete_themes' => true,
+    'export' => true,
+    'cfdb7_access' => true,
+);
+
+//add_action( 'admin_bar_menu', 'remove_extra_toolbar' , 10000009 );
+function remove_extra_toolbar($wp_admin_bar) {
+    // hide these nodes for non super admin
+    if (!current_user_can('super_admin')) {
+        $wp_admin_bar->remove_node('wp-ultimo');
+    }
+    $user = wp_get_current_user();
+    if ( $user->ID !== 1 ) { // not super admin
+        $wp_admin_bar->remove_node('wp-ultimo');
+    }
+}
+
+function add_custom_wp_role() {
+    global $sales_manager_capabilities;
+    global $sales_capabilities;
+    global $marketing_capabilities;
+    global $support_agent_capabilities;
+    addOrUpdateRoles('sales_manager', '业务经理', $sales_manager_capabilities);
+    addOrUpdateRoles('sales', '业务员', $sales_capabilities);
+    addOrUpdateRoles('marketing', '运营', $marketing_capabilities);
+    // todo: add internal facing roles
+    addOrUpdateRoles('support_agent', '技术支持', $support_agent_capabilities);
+}
+
+function addOrUpdateRoles($role, $display_name, $capabilities) {
+    $has_role = wp_roles()->is_role( $role );
+    if ($has_role) {
+        // update capabilities
+        $sales_manager = get_role( $role );
+        foreach($capabilities as $key => $value) {
+            if ($value) {
+                $sales_manager->add_cap($key);
+            } else {
+                $sales_manager->remove_cap($key);
+            }
+        }
+    } else {
+        add_role( $role, $display_name, $capabilities);
+    }
+}
+
+function remove_wp_role() {
+    remove_role( 'editor' );
+    remove_role( 'author' );
+    remove_role( 'contributor' );
+    remove_role( 'subscriber' );
+}
+
+// todo: edit this constantly
+function remove_admin_menu_by_role() {
+    global $user_ID;
+    $user = wp_get_current_user();
+    if ( in_array( 'sales_manager', (array) $user->roles ) ) {
+        remove_menu_page( 'edit.php?post_type=elementor_library' ); // Elementor Templates
+        remove_menu_page( 'elementor' ); // Elementor
+        remove_menu_page( 'tools.php' );
+        remove_menu_page('edit.php?post_type=acf-field-group');
+    }
+    if ( in_array( 'sales', (array) $user->roles ) ) {
+        remove_menu_page( 'edit.php?post_type=wpdmpro' );
+        remove_menu_page( 'tools.php' );
+        remove_menu_page( 'edit.php?post_type=elementor_library' ); // Elementor Templates
+        remove_menu_page( 'wpcf7' ); // Elementor Templates
+    }
+    if ( in_array( 'marketing', (array) $user->roles ) ) {
+        remove_menu_page( 'edit.php?post_type=wpdmpro' );
+        remove_menu_page( 'tools.php' );
+        remove_menu_page( 'edit.php?post_type=elementor_library' ); // Elementor Templates
+        remove_menu_page( 'wpcf7' ); // Elementor Templates
+    }
+    if ( in_array( 'support_agent', (array) $user->roles ) ) {
+        remove_menu_page( 'wp-ultimo' );
+        remove_menu_page('wp-ultimo-subscriptions');
+        remove_menu_page('wp-ultimo-plans');
+        remove_menu_page('wp-ultimo-coupons');
+        remove_menu_page('settings.php');
+//        remove_menu_page('users.php');
+    }
+}
+
+/*
+ * Prevent user from cheating by directly entering admin page URLs
+ */
+function tcd_restrict_admin_pages() {
+    // retrieve the current page's ID
+    $current_screen_id = get_current_screen()->id;
+    $current_screen_post_type = get_current_screen()->post_type;
+    // XXX where XXX ?page=XXX
+    $current_page = $_GET['page'] ? $_GET['page'] : '';
+    $restricted_screens_by_post_type = array('none');
+    $restricted_screens_by_id = array('none');
+    // value of ?page=XXX
+    $restricted_screens_by_page = array('none');
+
+    global $user_ID;
+    $user = wp_get_current_user();
+
+    // todo: change this for real restriction
+    if ( in_array( 'sales_manager', (array) $user->roles ) ) {
+        $restricted_screens_by_post_type = array(
+            'acf-field-group',
+        );
+        $restricted_screens_by_id = array(
+            'none',
+        );
+    }
+    if ( in_array( 'sales', (array) $user->roles ) ) {
+        $restricted_screens_by_post_type = array(
+            'acf-field-group',
+        );
+        $restricted_screens_by_id = array(
+            'none',
+        );
+    }
+    if ( in_array( 'marketing', (array) $user->roles ) ) {
+        $restricted_screens_by_post_type = array(
+            'acf-field-group',
+        );
+        $restricted_screens_by_id = array(
+            'none',
+        );
+    }
+    if ( in_array( 'administrator', (array) $user->roles ) && !current_user_can('super_admin')) {
+        $restricted_screens_by_post_type = array(
+            'none',
+        );
+        $restricted_screens_by_id = array(
+            'none',
+        );
+        // value of ?page=XXX
+        $restricted_screens_by_page = array(
+            'none'
+        );
+    }
+    // limit wp ultimo settings
+    if ( in_array( 'support_agent', (array) $user->roles ) ) {
+        $restricted_screens_by_post_type = array(
+            '',
+        );
+        $restricted_screens_by_id = array(
+            'users'
+        );
+        // value of ?page=XXX
+        $restricted_screens_by_page = array(
+            'wp-ultimo',
+            'wp-ultimo-subscriptions',
+            'wp-ultimo-plans',
+            'wp-ultimo-coupons',
+            'users.php'
+        );
+    }
+    // limit access to all users but super_admin
+    if (!current_user_can('super_admin')) {
+        restrict_access($current_screen_id,
+            $current_screen_post_type,
+            $restricted_screens_by_id,
+            $restricted_screens_by_post_type,
+            $current_page,
+            $restricted_screens_by_page);
+    }
+}
+
+/**
+ * @param $current_screen_id
+ * @param $current_screen_post_type
+ * @param array $restricted_screens_by_id
+ * @param array $restricted_screens_by_post_type
+ */
+function restrict_access($current_screen_id, $current_screen_post_type, array $restricted_screens_by_id, array $restricted_screens_by_post_type, $current_page = 'none', $restricted_screens_by_page = array('none')): void
+{
+    foreach ($restricted_screens_by_post_type as $restricted_screen) {
+        // compare current screen id against each restricted screen
+        if ($current_screen_post_type === $restricted_screen) {
+            wp_die(__('You are not allowed to access this page.', 'tcd'));
+        }
+    }
+
+    foreach ($restricted_screens_by_id as $restricted_screen) {
+        // compare current screen id against each restricted screen
+        if ($current_screen_id === $restricted_screen) {
+            wp_die(__('You are not allowed to access this page.', 'tcd'));
+        }
+    }
+
+    if ($current_page != 'none') {
+        foreach ($restricted_screens_by_page as $restricted_screen) {
+            // compare current screen id against each restricted screen
+            if ($current_page === $restricted_screen) {
+                wp_die(__('You are not allowed to access this page.', 'tcd'));
+            }
+        }
+    }
+}
+
+//register_activation_hook( __FILE__, 'add_plugin_manager_role' );
+//add_action( 'init', 'remove_wp_role' ); // remove default WP roles
+//add_action( 'init', 'add_custom_role_to_network' );
+//add_action( 'admin_init', 'remove_admin_menu_by_role', 99999 ); // remove admin menus by role (only displaying)
+//add_action( 'wpmu_new_blog', 'add_custom_user_role_new_site' ); // update role when new site added to network
+//add_action( 'current_screen', 'tcd_restrict_admin_pages' ); // prevent user from cheating
+//add_action( 'wpmu_new_blog', 'add_custom_user_role_new_site' );
+
+//add_action( 'admin_init', 'wpse_136058_debug_admin_menu', 9999 );
+function wpse_136058_debug_admin_menu() {
+    ?>
+    <style>
+        .debug {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+    </style>
+    <?php
+    echo '<div class="debug"><pre>' . print_r( $GLOBALS[ 'menu' ], TRUE) . '</pre></div>';
+}
+
+function debug_admin_menus() {
+    if ( !is_admin())
+        return;
+    global $submenu, $menu, $pagenow;
+    if ( current_user_can('manage_options') ) { // ONLY DO THIS FOR ADMIN
+        if( $pagenow == 'index.php' ) {  // PRINTS ON DASHBOARD
+            echo '<pre>'; print_r( $menu ); echo '</pre>'; // TOP LEVEL MENUS
+//            echo '<pre>'; print_r( $submenu ); echo '</pre>'; // SUBMENUS
+        }
+    }
+}
+add_action( 'admin_notices', 'debug_admin_menus', 999999 );
+
+add_action( 'network_admin_notices', 'debug_network_admin_menus', 999999 );
+
+function debug_network_admin_menus() {
+    global $submenu, $menu, $pagenow;
+            echo '<pre>'; print_r( $menu ); echo '</pre>'; // TOP LEVEL MENUS
+//            echo '<pre>'; print_r( $submenu ); echo '</pre>'; // SUBMENUS
+}
+
+// Add this as mu-plugin
+function wpse32738_get_editable_roles( $editable_roles )
+{
+    $user = wp_get_current_user();
+    // todo: change this for real restriction
+    if ( in_array( 'administrator', (array) $user->roles ) &&  current_user_can('super_admin')) {
+        return $editable_roles;
+    } else {
+        $limited_roles = [];
+        foreach($editable_roles as $key => $value) {
+            if ($key != 'support_agent') {
+                $limited_roles[$key] = $value;
+            }
+        }
+        return $limited_roles;
+    }
+}
+//add_filter( 'editable_roles', 'wpse32738_get_editable_roles' );
+
+
+function wpse_188863_get_allowed_roles( $user ) {
+    $allowed = array();
+
+    if ( get_current_user_id() === 1 ) { // Super admin can edit all roles
+        $allowed = array_keys( $GLOBALS['wp_roles']->roles );
+    } elseif ( in_array( 'support_agent', $user->roles ) ) {
+        $allowed[] = 'administrator';
+        $allowed[] = 'sales_manager';
+        $allowed[] = 'sales';
+        $allowed[] = 'marketing';
+    } elseif ( in_array( 'administrator', $user->roles ) ) {
+        $allowed[] = 'administrator';
+        $allowed[] = 'sales_manager';
+        $allowed[] = 'sales';
+        $allowed[] = 'marketing';
+    } elseif (in_array( 'sales_manager', $user->roles )) {
+        $allowed[] = 'sales';
+        $allowed[] = 'marketing';
+    } elseif (in_array( 'sales', $user->roles )) {
+        $allowed[] = array();
+    } elseif (in_array( 'marketing', $user->roles )) {
+        $allowed[] = array();
+    }
+    return $allowed;
+}
+
+/**
+ * Remove roles that are not allowed for the current user role.
+ */
+function wpse_188863_editable_roles( $roles ) {
+    if ( $user = wp_get_current_user() ) {
+        $allowed = wpse_188863_get_allowed_roles( $user );
+
+        foreach ( $roles as $role => $caps ) {
+            if ( ! in_array( $role, $allowed ) )
+                unset( $roles[ $role ] );
+        }
+    }
+
+    return $roles;
+}
+
+//add_filter( 'editable_roles', 'wpse_188863_editable_roles' );
+
+/**
+ * Prevent users deleting/editing users with a role outside their allowance.
+ */
+function wpse_188863_map_meta_cap( $caps, $cap, $user_ID, $args ) {
+    if ( ( $cap === 'edit_user' || $cap === 'delete_user' ) && $args ) {
+        $the_user = get_userdata( $user_ID ); // The user performing the task
+        $user     = get_userdata( $args[0] ); // The user being edited/deleted
+
+        if ($the_user->ID != 1 && $user->ID == 1) {
+            $caps[] = 'not_allowed';
+            return $caps;
+        }
+
+        if ( $the_user && $user && $the_user->ID != $user->ID /* User can always edit self */ ) {
+            $allowed = wpse_188863_get_allowed_roles( $the_user );
+
+            if ( array_diff( $user->roles, $allowed ) ) {
+                // Target user has roles outside of our limits
+                $caps[] = 'not_allowed';
+            }
+        }
+    }
+
+    return $caps;
+}
+
+//add_filter( 'map_meta_cap', 'wpse_188863_map_meta_cap', 10, 4 );
+
+class Anton_Role_Manager {
+    private $roles = array();
+    private $role_keys = array();
+
+    function __construct() {
+
+        // todo: change this when adding new role
+        $this->role_keys = array(
+                Enums::$sales_manager_role,
+                Enums::$agent_role,
+                Enums::$super_admin,
+                Enums::$sales_role,
+                Enums::$marketing_role,
+                Enums::$administrator,
+        );
+
+        // todo: change this when adding new role
+        $this->roles[Enums::$sales_manager_role] = new Role_Sales_Manager();
+        $this->roles[Enums::$agent_role] = new Role_Support_Agent();
+        $this->roles[Enums::$super_admin] = new Role_Super_Admin();
+        $this->roles[Enums::$sales_role] = new Role_Sales();
+        $this->roles[Enums::$marketing_role] = new Role_Marketing();
+        $this->roles[Enums::$administrator] = new Role_Administrator();
+
+        $this->init();
+    }
+
+    public function init() {
+        // remove default WP roles
+        add_action( 'init', array( $this, 'remove_default_roles' ) );
+
+        // add new roles
+        add_action( 'init', array( $this, 'add_custom_role_to_network' ) );
+
+        // hide menus by role
+        add_action( 'admin_init', array($this, 'remove_admin_menu_by_role'), 99999 ); // remove admin menus by role (only displaying)
+
+        // restrict access
+        add_action( 'current_screen', array($this, 'restrict_admin_pages_access') );
+
+        // remove toolbar for non super admin
+        add_action( 'admin_bar_menu', array($this, 'remove_extra_toolbar') , 10000009 );
+
+        // Client admin should not be able to see Super Admin and Support Agent role
+        add_filter( 'editable_roles', array($this, 'hide_editable_roles') );
+        // Only allow user to create new users under roles lower than his own role level only
+        add_filter( 'map_meta_cap', array($this, 'dont_allow_user_change_roles_outside_his_allow_range'), 10, 4 );
+    }
+
+    public function dont_allow_user_change_roles_outside_his_allow_range( $caps, $cap, $user_ID, $args ) {
+        $role_key = $this->get_current_user_role();
+        if ($role_key === Enums::$super_admin) {
+            return $caps;
+        }
+
+        if ( ( $cap === 'edit_user' || $cap === 'delete_user' ) && $args ) {
+            $the_user = get_userdata( $user_ID ); // The user performing the task
+            $user     = get_userdata( $args[0] ); // The user being edited/deleted
+
+            if ($the_user->ID != 1 && $user->ID == 1) {
+                $caps[] = 'not_allowed';
+                return $caps;
+            }
+
+            if ( $the_user && $user && $the_user->ID != $user->ID /* User can always edit self */ ) {
+//                $allowed = wpse_188863_get_allowed_roles( $the_user );
+                $allowed = $this->roles[$role_key]->get_allow_roles();
+
+                if ( array_diff( $user->roles, $allowed ) ) {
+                    // Target user has roles outside of our limits
+                    $caps[] = 'not_allowed';
+                }
+            }
+        }
+
+        return $caps;
+    }
+
+    public function hide_editable_roles($roles) {
+        $role_key = $this->get_current_user_role();
+
+        if($role_key == Enums::$super_admin) {
+            return $roles;
+        }
+
+        $allowed = $this->roles[$role_key]->get_allow_roles();
+        foreach ( $roles as $role => $caps ) {
+            if ( ! in_array( $role, $allowed ) )
+                unset( $roles[ $role ] );
+        }
+        return $roles;
+    }
+
+    public function remove_extra_toolbar($wp_admin_bar) {
+        // hide these nodes for non super admin
+        if (!current_user_can('super_admin')) {
+            $wp_admin_bar->remove_node('wp-ultimo');
+        }
+        $user = wp_get_current_user();
+        if ( $user->ID !== 1 ) { // not super admin
+            $wp_admin_bar->remove_node('wp-ultimo');
+        }
+    }
+
+    public function restrict_admin_pages_access() {
+        $role_key = $this->get_current_user_role();
+        $this->roles[$role_key]->restrict_admin_page_access();
+    }
+    private function get_current_user_role() {
+        $user = wp_get_current_user();
+        if ( $user->ID == 1 ) {
+            return Enums::$super_admin;
+        }
+        foreach ($this->role_keys as $key) {
+            if ( in_array( $key, (array) $user->roles ) ) {
+                return $key;
+            }
+        }
+    }
+    public function remove_admin_menu_by_role() {
+        $role_Key = $this->get_current_user_role();
+        $this->roles[$role_Key]->remove_admin_menu();
+    }
+    public function add_custom_role_to_network($network_wide ) {
+        if ( is_multisite() && $network_wide ) {
+            // run the code for all sites in a Multisite network
+            foreach ( get_sites(['fields'=>'ids']) as $blog_id ) {
+                switch_to_blog( $blog_id );
+                $this->add_custom_wp_role();
+            }
+            restore_current_blog();
+        }
+        else {
+            $this->add_custom_wp_role();
+        }
+    }
+    private function add_custom_wp_role() {
+        foreach ($this->roles as $role_name => $role) {
+            $role->register_role();
+        }
+    }
+    public function remove_default_roles() {
+        remove_role( 'editor' );
+        remove_role( 'author' );
+        remove_role( 'contributor' );
+        remove_role( 'subscriber' );
+    }
+}
+
+new Anton_Role_Manager();
