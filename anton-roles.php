@@ -227,7 +227,10 @@ new Anton_Role_Manager();
 /*
  * github update
  */
-include_once('updater.php');
+if ( ! defined( 'ABSPATH' ) || class_exists( 'WPGitHubUpdater' ) || class_exists( 'WP_GitHub_Updater' ) ) {
+} else {
+    require_once plugin_dir_path( __FILE__ ) . 'updater.php';
+}
 if (is_admin()) { // note the use of is_admin() to double check that this is happening in the admin
     $config = array(
         'slug' => plugin_basename(__FILE__), // this is the slug of your plugin
